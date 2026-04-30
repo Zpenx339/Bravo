@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Araba Yarışı - Endless Runner</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0,255,100,0.3);
+        }
+        canvas {
+            display: block;
+            background: #111;
+        }
+        #ui {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            color: white;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+        #score {
+            font-size: 28px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px black;
+        }
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.85);
+            padding: 30px 50px;
+            border-radius: 15px;
+            text-align: center;
+            display: none;
+            pointer-events: all;
+        }
+        button {
+            margin-top: 15px;
+            padding: 12px 30px;
+            font-size: 20px;
+            background: #00ff88;
+            color: black;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        button:hover { background: #00cc66; }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="canvas" width="800" height="600"></canvas>
+    
+    <div id="ui">
+        <div id="score">Skor: 0</div>
+    </div>
+
+    <div id="gameOver">
+        <h1>Oyun Bitti!</h1>
+        <p id="finalScore">Skor: 0</p>
+        <button onclick="restartGame()">Tekrar Oyna</button>
+    </div>
+</div>
+
+<script>
+// ====================== OYUN AYARLARI ======================
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const scoreElement = document.getElementById('score');
+const gameOverScreen = document.getElementById('gameOver');
+const finalScoreElement = document.getElementById('finalScore');
+
+let gameRunning = false;
+let score = 0;
+let speed = 6;
+let highScore = localStorage.getItem('carHighScore') || 0;
+
+// Araba
+const player = {
+    x: 350,
+    y: 450,
+    width: 60,
+    height: 110,
+    speed: 8
+};
+
+// Yol ve engeller
+let roadY = 0;
+let obstacles = [];
+let lastObstacleTime = 0;
+
+// Kontroller
+let leftPressed = false;
+let rightPressed = false;
+let touchStartX = 0;
+
+// ====================== ÇİZİM FONKSİYONLARI ======================
+function drawRoad() {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Yol kenarları
+    ctx.fillStyle = '#444';
+    ctx.fillRect(100, 0, 20, canvas.height);
+    ctx.fillRect(canvas.width - 120, 0, 20, canvas.height);
+
+    // Yol çizgileri
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 8;
+    for (let i = -2; i < 8; i++) {
+        let y = (roadY + i * 120) % (canvas.height + 240) - 120;
+        ctx.beginPath();
+        ctx.setLineDash([40, 60]);
+        ctx.moveTo(canvas.width/2 - 40, y);
+        ctx.lineTo(canvas.width/2 - 40, y + 100);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(canvas.width/2 + 40, y);
+        ctx.lineTo(canvas.width/2 + 40, y + 100);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+}
+
+function drawCar(x, y, color = '#00ff88') {
+    // Gölge
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(x + 8, y + 15, player.width - 16, player.height - 10);
+
+    // Ana gövde
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, player.width, player.height);
+
+    // Cam
+    ctx.fillStyle = '#111';
+    ctx.fillRect(x + 10, y + 25, player.width - 20, 40);
+
+    // Farlar
+    ctx.fillStyle = '#ffff00';
+    ctx.fillRect(x + 8, y + 8, 12, 15);
+    ctx.fillRect(x + player.width - 20, y + 8, 12, 15);
+
+    // Arka ışık
+    ctx.fillStyle = '#ff2222';
+    ctx.fillRect(x + 8, y + player.height - 20, 15, 12);
+    ctx.fillRect(x + player.width - 23, y + player.height - 20, 15, 12);
+}
+
+// ====================== OYUN MANTIĞI ======================
+function update() {
+    if (!gameRunning) return;
+
+    roadY += speed;
+    score += 1;
+    scoreElement.textContent = `Skor: ${Math.floor(score/5)}`;
+
+    // Hız artışı
+    if (score % 800 === 0) speed = Math.min(speed + 0.4, 12);
+
+    // Engelleri güncelle
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        obstacles[i].y += speed;
+
+        if (obstacles[i].y > canvas.height) {
+            obstacles.splice(i, 1);
+        }
+    }
+
+    // Yeni engel oluştur
+    if (Date.now() - lastObstacleTime > 1200 - (speed * 40)) {
+        let lane = Math.random() * 3 | 0;
+        let x = 160 + lane * 160;
+        obstacles.push({
+            x: x,
+            y: -120,
+            width: 60,
+            height: 110
+        });
+        lastObstacleTime = Date.now();
+    }
+
+    // Çarpışma kontrolü
+    for (let obs of obstacles) {
+        if (
+            player.x < obs.x + obs.width &&
+            player.x + player.width > obs.x &&
+            player.y < obs.y + obs.height &&
+            player.y + player.height > obs.y
+        ) {
+            gameOver();
+            return;
+        }
+    }
+}
+
+function draw() {
+    drawRoad();
+
+    // Engelleri çiz
+    for (let obs of obstacles) {
+        drawCar(obs.x, obs.y, '#ff4444');
+    }
+
+    // Oyuncu arabası
+    drawCar(player.x, player.y, '#00ff88');
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// ====================== KONTROLLER ======================
+function handleKeys(e) {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") leftPressed = true;
+    if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") rightPressed = true;
+}
+
+function handleKeyUp(e) {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") leftPressed = false;
+    if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") rightPressed = false;
+}
+
+// Mobil dokunmatik
+canvas.addEventListener('touchstart', e => {
+    if (!gameRunning) return;
+    touchStartX = e.touches[0].clientX;
+});
+
+canvas.addEventListener('touchmove', e => {
+    if (!gameRunning) return;
+    let touchX = e.touches[0].clientX;
+    let diff = touchX - touchStartX;
+
+    if (diff < -30) player.x -= player.speed * 1.8;
+    if (diff > 30) player.x += player.speed * 1.8;
+
+    touchStartX = touchX;
+});
+
+document.addEventListener('keydown', handleKeys);
+document.addEventListener('keyup', handleKeyUp);
+
+// ====================== OYUN BAŞLAT / BİTİR ======================
+function startGame() {
+    gameRunning = true;
+    score = 0;
+    speed = 6;
+    obstacles = [];
+    player.x = 370;
+    lastObstacleTime = Date.now();
+    gameOverScreen.style.display = 'none';
+    scoreElement.textContent = 'Skor: 0';
+}
+
+function gameOver() {
+    gameRunning = false;
+    if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('carHighScore', highScore);
+    }
+    finalScoreElement.textContent = `Skor: ${Math.floor(score/5)}   |   En Yüksek: ${Math.floor(highScore/5)}`;
+    gameOverScreen.style.display = 'block';
+}
+
+function restartGame() {
+    startGame();
+}
+
+// ====================== ANA BAŞLANGIÇ ======================
+function init() {
+    // Oyuncu hareket (her frame)
+    setInterval(() => {
+        if (!gameRunning) return;
+        if (leftPressed && player.x > 130) player.x -= player.speed;
+        if (rightPressed && player.x < canvas.width - player.width - 130) player.x += player.speed;
+    }, 16);
+
+    startGame();
+    gameLoop();
+}
+
+init();
+</script>
+
+</body>
+</html>
